@@ -1,0 +1,3 @@
+include README.md
+include conf/config_example.yaml
+

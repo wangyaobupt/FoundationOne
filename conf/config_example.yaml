@@ -1,0 +1,16 @@
+#deepseek:
+#  base_url: https://ark.cn-beijing.volces.com/api/v3
+#  api_key: EXAMPLE_API_KEY
+#  model: EXAMPLE_MODEL_ID
+#
+#doubao-15-vision-pro-32k-250115:
+#  base_url: https://ark.cn-beijing.volces.com/api/v3
+#  api_key: EXAMPLE_API_KEY
+#  model: EXAMPLE_MODEL_ID
+
+
+chatbot-llm:
+  base_url: https://ark.cn-beijing.volces.com/api/v3
+  api_key: EXAMPLE_API_KEY
+  model: EXAMPLE_MODEL_ID
+

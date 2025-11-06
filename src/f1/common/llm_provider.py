@@ -1,0 +1,239 @@
+import logging
+import re
+from abc import ABC, abstractmethod
+from typing import List, AsyncIterable, Any, Optional
+import asyncio
+
+from openai import Stream, AsyncOpenAI
+from openai.types.chat import ChatCompletionChunk
+
+from f1.common.schema import LLMConfig, AbstractLLMMessage
+
+
+class AbstractLLMProvider(ABC):
+    """Abstract base class for LLM providers"""
+    sync_client: Any   # 用于同步调用的客户端，必须支持.chat.completions.create 方法
+    async_client: Any  # 用于异步调用的客户端必须支持.chat.completions.create 方法
+
+    last_trunk_meta_dict: dict # 完整保存上一条返回信息(如果是stream模式，则是这条消息的最后一个trunk)的response.choices[0].to_dict()
+
+    streaming_monitored_trunk_keys: list[str] #
+    # 仅用于streaming模式，如果某个trunk内包含key，且key的内容非空，则将这个trunk的meta存入streaming_trunk_meta_dict[key]
+    streaming_trunk_meta_dict: dict[str, list] # 仅用于streaming模式，当某个trunk
+
+    def __init__(self, llm_config: LLMConfig,
+                 streaming_monitored_trunk_keys: Optional[list[str]] = None):
+        """
+        Initialize the LLM provider with configuration
+
+        :param llm_config: LLMConfig instance with provider details
+        :param streaming_monitored_trunk_keys: List of keys to monitor in streaming, set to None for Non-stream mode
+        or not interested in streaming trunk meta
+        """
+        self.logger = logging.getLogger(f"{self.__class__.__module__}.{self.__class__.__name__}")
+        self.llm_config = llm_config
+        self.last_trunk_meta_dict = dict()
+        self.streaming_monitored_trunk_keys = streaming_monitored_trunk_keys if streaming_monitored_trunk_keys is not None else []
+        self.streaming_trunk_meta_dict = dict()
+        self._initialize_client()
+
+    @abstractmethod
+    def _initialize_client(self):
+        """
+        Initialize the specific client for each provider，完成对sync_client和async_client的赋值
+        To be implemented by subclasses
+        """
+        pass
+
+    @abstractmethod
+    def chat_completion(self,
+                        messages: List[AbstractLLMMessage],
+                        **kwargs) -> str:
+        """
+        Generate chat completion using the LLM provider
+
+        :param messages: List of message dictionaries
+        :param kwargs: following service provider's API guide, e.g.
+            max_tokens: Maximum number of tokens to generate
+            temperature: Sampling temperature for text generation
+        :return: Generated chat response
+        """
+        pass
+
+    @abstractmethod
+    async def async_chat_completion(self,
+                        messages: List[AbstractLLMMessage],
+                        **kwargs) -> str:
+        """
+        Async version of chat_completion to generate chat completion using the LLM provider
+        """
+        pass
+
+    # Add to AbstractLLMProvider
+    @abstractmethod
+    async def chat_completion_stream(self,
+                                     messages: List[AbstractLLMMessage],
+                                     **kwargs) -> AsyncIterable[str]:
+        """
+        Generate streaming chat completion using the LLM provider
+
+        :param messages: List of message dictionaries
+        :param kwargs: following service provider's API guide, e.g.
+            max_tokens: Maximum number of tokens to generate
+            temperature: Sampling temperature for text generation
+        :yield: Generated chat response chunks as they arrive
+        """
+        pass
+
+
+class BaseProvider(AbstractLLMProvider):
+    """Base class for OpenAI-like providers"""
+
+    def chat_completion(self,
+                        messages: List[AbstractLLMMessage],
+                        **kwargs) -> str:
+        converted_msgs = [x.model_dump() for x in messages]
+        latest_msg_str = f"{converted_msgs[-1]}"
+        self.logger.debug(f"[Agent->LLM] [Length_As_String = {len(str(converted_msgs)):,}] {latest_msg_str[:1000]}")
+        response = self.sync_client.chat.completions.create(
+            model=self.llm_config.model,
+            messages=converted_msgs,
+            **kwargs
+        )
+        response_str = response.choices[0].message.content.strip()
+        self.logger.debug(f"[LLM->Agent] {response_str}")
+        return response_str
+
+    async def async_chat_completion(self,
+                              messages: List[AbstractLLMMessage],
+                              **kwargs
+                              ) -> str:
+        """
+        Asynchronous implementation of chat completion
+
+        :param messages: List of message dictionaries
+        :param kwargs: following service provider's API guide, e.g.
+            max_tokens: Maximum number of tokens to generate
+            temperature: Sampling temperature for text generation
+        :return: Generated chat response
+        """
+        converted_msgs = [x.model_dump() for x in messages]
+        latest_msg_str = f"{converted_msgs[-1]}"
+        self.logger.debug(f"[Agent->LLM Async] [Length_As_String = {len(str(converted_msgs)):,}] {latest_msg_str[:1000]}")
+
+        response = await self.async_client.chat.completions.create(
+            model=self.llm_config.model,
+            messages=converted_msgs,
+            **kwargs
+        )
+
+        response_str = response.choices[0].message.content.strip()
+        self.last_trunk_meta_dict = response.choices[0].model_dump()
+        self.logger.debug(f"[LLM Async->Agent] {response_str}")
+        return response_str
+
+    # Implementation for OpenAIBaseProvider
+    async def chat_completion_stream(self, messages: List[AbstractLLMMessage], **kwargs) -> AsyncIterable[str]:
+        try:
+            converted_msgs = [x.model_dump() for x in messages]
+            for msg in converted_msgs:
+                msg_str = str(msg)
+                self.logger.debug(
+                    f"[Agent->LLM Stream] [Length_As_String = {len(msg_str):,}] {msg_str[:200]}"
+                )
+
+            stream: Stream[ChatCompletionChunk] = self.sync_client.chat.completions.create(
+                model=self.llm_config.model,
+                messages=converted_msgs,
+                stream=True,
+                **kwargs
+            )
+
+            # Use async iteration pattern
+            for chunk in stream:
+                if chunk.choices:
+                    choice0 = chunk.choices[0]
+                    # capture final chunk meta when finish_reason shows up
+                    if getattr(choice0, "finish_reason", None) is not None:
+                        self.last_trunk_meta_dict = choice0.model_dump()
+
+                    for monitored_key in self.streaming_monitored_trunk_keys:
+                        if hasattr(choice0, monitored_key) and getattr(choice0, monitored_key):
+                            if monitored_key not in self.streaming_trunk_meta_dict:
+                                self.streaming_trunk_meta_dict[monitored_key] = list()
+                            self.streaming_trunk_meta_dict[monitored_key].append(choice0.model_dump())
+
+                    # yield content if present (same behavior as before)
+                    if getattr(choice0, "delta", None) is not None and (choice0.delta.content is not None) and choice0.delta.content:
+                        content = choice0.delta.content
+                        self.logger.debug(f"[LLM Stream->Agent] chunk: {content}")
+                        yield content
+                        await asyncio.sleep(0)  # Allow other tasks to run
+
+        except Exception as e:
+            self.logger.error(f"Error in streaming completion: {str(e)}")
+            raise
+
+
+class OpenAIProvider(BaseProvider):
+    """Standard OpenAI Provider"""
+
+    def _initialize_client(self):
+        """
+        Initialize OpenAI-like client with configurable parameters
+        """
+        try:
+            import openai
+
+            # Allow for additional configuration like Azure setup
+            if hasattr(self, '_configure_client'):
+                self._configure_client(openai)
+
+            self.sync_client = openai.OpenAI(
+                api_key=self.llm_config.api_key,
+                base_url=self.llm_config.base_url
+            )
+            self.async_client = AsyncOpenAI(
+                api_key=self.llm_config.api_key,
+                base_url=self.llm_config.base_url
+            )
+            self.logger.debug(f"base_url = {self.llm_config.base_url}")
+        except ImportError:
+            raise ImportError("OpenAI SDK is not installed. Please install it using 'pip install openai'")
+
+
+class VolcanoProvider(BaseProvider):
+    """Volcano LLM Provider"""
+
+    def _initialize_client(self):
+        """
+        Initialize Volcano client with configurable parameters
+        """
+        try:
+            from volcenginesdkarkruntime import Ark, AsyncArk
+
+            self.sync_client = Ark(
+                api_key=self.llm_config.api_key
+            )
+            self.async_client = AsyncArk(
+                api_key=self.llm_config.api_key
+            )
+            self.logger.debug(f"base_url = {self.llm_config.base_url}")
+        except ImportError:
+            raise ImportError("Volcano SDK is not installed. Please install it using 'pip install volcengine-python-sdk[ark]'")
+
+
+class LLMProviderFactory:
+    volcano_host_pattern = re.compile(r"ark\.[^\s]+?\.volces\.com")
+
+    @classmethod
+    def create_instance(cls, llm_config: LLMConfig) -> AbstractLLMProvider:
+        """
+        Factory method to create an instance of the appropriate LLM provider based on the configuration
+
+        :param llm_config: LLMConfig instance with provider details
+        :return: Instance of AbstractLLMProvider subclass
+        """
+        if cls.volcano_host_pattern.search(llm_config.base_url):
+            return VolcanoProvider(llm_config)
+        return OpenAIProvider(llm_config)
