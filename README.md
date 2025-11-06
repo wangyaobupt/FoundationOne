@@ -103,6 +103,12 @@ from f1.common.logging_helper import configure_module_logging
 configure_module_logging(module_names_list=["f1"], level=logging.INFO, log_dir="./log")
 ```
 
+## Usage
+To run the tests, execute the following command:
+```bash
+./run_tests.sh
+```
+
 ## Project layout
 
 - src/f1: library code (agents, providers, schemas, helpers)

@@ -14,3 +14,12 @@ chatbot-llm:
   api_key: EXAMPLE_API_KEY
   model: EXAMPLE_MODEL_ID
 
+baichuan:
+  base_url: https://api.baichuan-ai.com/v1/
+  api_key: EXAMPLE_API_KEY
+  model: Baichuan-M2-Plus
+
+image2meta-llm:
+  base_url: https://ark.cn-beijing.volces.com/api/v3
+  api_key: EXAMPLE_API_KEY
+  model: EXAMPLE_MODEL_ID_FOR_MULTIMODE_LLM

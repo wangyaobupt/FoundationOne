@@ -25,10 +25,11 @@ else:
     ]
 
 setup(
-    name="f1-foundation-one",
+    name="foundation-one",
     version="0.1.0",
     description="Foundation One (f1): base infrastructure, shared services, and common LLM helpers",
-    author="Foundation One Team",
+    author="Yao WANG",
+    author_email="wangyao_bupt@hotmail.com",
     python_requires=">=3.10",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
