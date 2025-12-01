@@ -12,7 +12,7 @@ def log_execution_time(func):
         return result
     return wrapper
 
-def configure_module_logging(module_names_list:list[str]=None, level=logging.DEBUG, log_dir='./log'):
+def configure_module_logging(module_names_list:list[str] | None = None, level=logging.DEBUG, log_dir='./log'):
     """
     Configure logging with dynamic log file paths.
 

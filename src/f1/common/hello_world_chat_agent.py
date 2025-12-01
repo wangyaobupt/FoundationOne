@@ -27,17 +27,17 @@ class HelloWorldChatAgent(LLMChatAgent):
                                           f"dumped by using pydantic.BaseModel.model_json_schema as be"
                                           f"low: ```{SimpleSchema.model_json_schema()}```.")
 
-    def validate(self, response_str: str, **kwargs) -> (bool, SimpleSchema):
+    def validate(self, response_str: str, **kwargs) -> tuple[bool, SimpleSchema|str]:
         is_succ, ret_obj_or_failed_reason = LLMResponseHelper.convert_LLM_json_response_to_obj(
             llm_response_str=response_str,
             target_class=SimpleSchema
         )
 
         if not is_succ:
-            failed_reason = ret_obj_or_failed_reason
+            failed_reason: str = ret_obj_or_failed_reason # type: ignore
             return False, failed_reason
 
-        ret_obj: SimpleSchema = ret_obj_or_failed_reason
+        ret_obj: SimpleSchema = ret_obj_or_failed_reason # type: ignore
         if ret_obj.name != kwargs['name']:
             return False, f"Name in your response is NOT the expected name as I told you: {kwargs}"
 
@@ -67,7 +67,7 @@ class HelloWorldVisualChatAgent(LLMChatAgent):
                                         ))
                                     ])
 
-    def validate(self, response_str: str, **kwargs) -> (bool, Any):
+    def validate(self, response_str: str, **kwargs) -> tuple[bool, Any]:
         return True, response_str
 
     def build_next_user_msg(self, failed_reason_or_supplement_info: str, **kwargs) -> AbstractLLMMessage:
@@ -95,7 +95,7 @@ class BaichuanEvidenceChatAgent(LLMChatAgent):
                                   content=prompt)
 
     def validate(self, response_str: str, response_object: Optional[dict] = None,
-        **kwargs) -> (bool, BaichuanResponseModel):
+        **kwargs) -> tuple[bool, BaichuanResponseModel]:
         return True, BaichuanResponseModel(answer=response_str,
                                            evidence_list=response_object.get('grounding', {}).get('evidence') if response_object else None)
 

@@ -111,18 +111,21 @@ class LLMChatAgent(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def validate(self, response_str: str, response_obj: Optional[dict] = None, **kwargs) -> (bool, Any):
+    def validate(self, response_str: str, response_obj: Optional[dict] = None, **kwargs) -> tuple[bool, Any]:
         """
             如果LLM返回的消息符合要求，返回 （True， converted LLM response: object)
             反之，返回 （False, failed_reason: str)
+
+        :param response_str: LLM返回的文本内容
+        :param response_obj: 除了返回的字符串，很多大模型可能会多返回证据列表等结构化数据，这里response_object完整保存大模型返回的choices[0]的内容
         """
         raise NotImplementedError()
 
-    @abstractmethod
-    def build_next_user_msg(self, failed_reason_or_supplement_info: Any, **kwargs) -> AbstractLLMMessage:
-        raise NotImplementedError()
-
-
+    
+    def build_next_user_msg(self, 
+                            failed_reason_or_supplement_info: str, **kwargs) -> LLMMessageTextOnly:
+        return LLMMessageTextOnly(role=LLMRole.USER,
+                                  content=f"Please correct your answer according to the following comments: {failed_reason_or_supplement_info}")
 
 
 

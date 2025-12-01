@@ -34,7 +34,7 @@ class LLMResponseHelper:
             return None
 
     @staticmethod
-    def convert_LLM_json_response_to_obj(llm_response_str: str, target_class: Type[BaseModel] = None):
+    def convert_LLM_json_response_to_obj(llm_response_str: str, target_class: Optional[Type[BaseModel]] = None):
         """
             从LLM回复的文本抽取JSON，转为指定的Data Model
             Args:
@@ -63,4 +63,39 @@ class LLMResponseHelper:
             return True, ret_obj
         except ValidationError as e:
             return False, f"The JSON object cannot be decoded correctly: {e}"
+    
+    @staticmethod
+    def convert_LLM_json_response_to_obj_list(llm_response_str: str, target_class: Optional[Type[BaseModel]] = None):
+        """
+            从LLM回复的文本抽取JSON，转为List of Data Model
+            Args:
+                llm_response_str
+                target_class: 目标model的类型，如果为None，则返回json.load的结果
 
+            Returns:
+                is_success: boolean
+                failed_reason_or_obj: 如果is_success为True，这一项为返回的object list；反之，这一项为失败原因字符串
+        """
+        json_text = LLMResponseHelper.extract_last_part_of_content(llm_response_str)
+        if not isinstance(json_text, str):
+            # return False, "No JSON text enclosed in ```json(.*?)``` found in response."
+            json_text = llm_response_str # 如果LLM没有返回json文本，直接使用整个回复文本
+        
+        obj_list_raw: list[dict]
+        try:
+            obj_list_raw = json.loads(json_text)
+        except json.JSONDecodeError as e:
+            return False, f"We cannot decode list from your JSON text, the decode error is: {e}"
+
+        ret_list = []
+        for idx, obj_raw in enumerate(obj_list_raw):
+            if target_class is None:
+                ret_list.append(obj_raw)
+            else:
+                try:
+                    obj = target_class.model_validate(obj_raw)
+                    ret_list.append(obj)
+                except ValidationError as e:
+                    return False, f"The JSON object at index {idx} cannot be decoded correctly: {e}"
+        
+        return True, ret_list
