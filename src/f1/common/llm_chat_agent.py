@@ -69,7 +69,6 @@ class LLMChatAgent(ABC):
         self.count_of_retry_single_msg = 0
         while not is_success:
             response_str = ""
-            response_object: dict = {}  # 除了返回的字符串，很多大模型可能会多返回证据列表等结构化数据，这里response_object完整保存大模型返回的choices[0]的内容
             try:
                 response_str = await self.llm_provider.async_chat_completion(self.messages_history + [next_user_msg])
             except RuntimeError as e:
