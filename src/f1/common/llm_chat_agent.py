@@ -101,9 +101,8 @@ class LLMChatAgent(ABC):
         else:
             return None
 
-    @abstractmethod
     def build_system_msg(self, **kwargs) -> Optional[AbstractLLMMessage]:
-        raise NotImplementedError()
+        return None # By default, the SYstem Message are not needed
 
     @abstractmethod
     def build_init_user_msg(self, **kwargs) -> AbstractLLMMessage:
