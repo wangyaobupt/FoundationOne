@@ -78,7 +78,8 @@ class LLMChatAgent(ABC):
                     self.logger.error(f"Failed to send msg to LLM after retry {self.threshold_of_retry_single_msg} times, check service status")
                     break
 
-            assert response_str
+            # 在实测中发现了response_str为“”或者None，但是没有发生RuntimeError的情况
+            # 这种情况下应该交给validate()函数判定后重新要求LLM返回结果，而不是通过assert抛出不可恢复异常
             self.count_of_retry_single_msg = 0 # clear counter after successfully send one message
             self.messages_history.extend([
                 next_user_msg, LLMMessageTextOnly(role=LLMRole.ASSISTANT, content=response_str)
