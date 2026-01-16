@@ -100,7 +100,18 @@ class BaseProvider(AbstractLLMProvider):
             messages=converted_msgs,
             **kwargs
         )
-        response_str = response.choices[0].message.content.strip()
+
+        # Defensive handling for empty/None responses
+        if not response or not response.choices or len(response.choices) == 0:
+            self.logger.warning(f"[LLM] Empty response received from API")
+            return ""
+
+        choice = response.choices[0]
+        if not choice.message or choice.message.content is None:
+            self.logger.warning(f"[LLM] No message content in response, finish_reason={choice.finish_reason}")
+            return ""
+
+        response_str = choice.message.content.strip()
         self.logger.debug(f"[LLM->Agent] {response_str}")
         return response_str
 
@@ -127,8 +138,18 @@ class BaseProvider(AbstractLLMProvider):
             **kwargs
         )
 
-        response_str = response.choices[0].message.content.strip()
-        self.last_trunk_meta_dict = response.choices[0].model_dump()
+        # Defensive handling for empty/None responses
+        if not response or not response.choices or len(response.choices) == 0:
+            self.logger.warning(f"[LLM Async] Empty response received from API")
+            return ""
+
+        choice = response.choices[0]
+        if not choice.message or choice.message.content is None:
+            self.logger.warning(f"[LLM Async] No message content in response, finish_reason={choice.finish_reason}")
+            return ""
+
+        response_str = choice.message.content.strip()
+        self.last_trunk_meta_dict = choice.model_dump()
         self.logger.debug(f"[LLM Async->Agent] {response_str}")
         return response_str
 
