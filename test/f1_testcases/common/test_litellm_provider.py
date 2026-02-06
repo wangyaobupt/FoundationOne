@@ -81,18 +81,20 @@ class TestLiteLLMProviderSync(unittest.TestCase):
         self.assertEqual(call_kwargs["api_key"], "test-key")
 
     @patch("litellm.completion")
-    def test_chat_completion_passes_api_base_when_set(self, mock_completion):
+    def test_base_url_not_leaked_to_litellm(self, mock_completion):
+        """base_url must NOT be passed as api_base — litellm routes via model prefix
+        base_url不应传递给litellm，litellm通过model前缀自动路由"""
         mock_completion.return_value = _make_litellm_response("ok")
         config_with_url = LLMConfig(
-            base_url="https://custom.endpoint.com",
+            base_url="https://openrouter.ai/api/v1",
             api_key="test-key",
-            model="some-model",
+            model="bedrock/anthropic.claude-haiku-4-5-20251001-v1:0",
             provider="litellm",
         )
         provider = LiteLLMProvider(config_with_url)
         provider.chat_completion(self.messages)
         call_kwargs = mock_completion.call_args[1]
-        self.assertEqual(call_kwargs["api_base"], "https://custom.endpoint.com")
+        self.assertNotIn("api_base", call_kwargs)
 
     @patch("litellm.completion")
     def test_chat_completion_empty_response(self, mock_completion):

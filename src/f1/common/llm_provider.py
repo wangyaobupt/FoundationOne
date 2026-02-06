@@ -269,8 +269,6 @@ class LiteLLMProvider(AbstractLLMProvider):
         call_kwargs = dict(model=self.llm_config.model, messages=converted_msgs, **kwargs)
         if self.llm_config.api_key:
             call_kwargs["api_key"] = self.llm_config.api_key
-        if self.llm_config.base_url:
-            call_kwargs["api_base"] = self.llm_config.base_url
 
         response = litellm.completion(**call_kwargs)
 
@@ -305,8 +303,6 @@ class LiteLLMProvider(AbstractLLMProvider):
         call_kwargs = dict(model=self.llm_config.model, messages=converted_msgs, **kwargs)
         if self.llm_config.api_key:
             call_kwargs["api_key"] = self.llm_config.api_key
-        if self.llm_config.base_url:
-            call_kwargs["api_base"] = self.llm_config.base_url
 
         response = await litellm.acompletion(**call_kwargs)
 
