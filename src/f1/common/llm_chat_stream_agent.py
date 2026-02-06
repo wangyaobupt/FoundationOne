@@ -2,7 +2,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import AsyncGenerator, Optional, AsyncIterator
 
-from f1.common.llm_provider import AbstractLLMProvider, OpenAIProvider
+from f1.common.llm_provider import AbstractLLMProvider, LLMProviderFactory
 from f1.common.schema import AbstractLLMMessage, LLMConfig, LLMMessageTextOnly, LLMRole
 
 
@@ -18,7 +18,7 @@ class LLMChatStreamAgent:
             self.logger.info(f"LLMChatStreamAgent initialized with streaming_monitored_trunk_keys={streaming_monitored_trunk_keys}")
         else:
             streaming_monitored_trunk_keys = []
-        self.llm_provider = OpenAIProvider(llm_config=llm_config, streaming_monitored_trunk_keys=streaming_monitored_trunk_keys)
+        self.llm_provider = LLMProviderFactory.create_instance(llm_config=llm_config, streaming_monitored_trunk_keys=streaming_monitored_trunk_keys)
         self.messages_history = list()
         if system_msg_list:
             self.messages_history.extend(system_msg_list)

@@ -4,10 +4,17 @@ from pydantic import BaseModel, Field, model_serializer, model_validator
 from enum import StrEnum
 
 
+class LLMProviderEnum(StrEnum):
+    OPENAI_COMPATIBLE = "openai-compatible"
+    VOLCANO = "volcano"
+    LITELLM = "litellm"
+
+
 class LLMConfig(BaseModel):
-    base_url: str
+    base_url: str = ""  # default empty; not needed for litellm
     api_key: str
     model: str = Field(description="name of specific model, such as gpt-4o")
+    provider: LLMProviderEnum = LLMProviderEnum.OPENAI_COMPATIBLE
 
 class LLMRole(StrEnum):
     USER = "user"

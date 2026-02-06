@@ -1,5 +1,4 @@
 import logging
-import re
 from abc import ABC, abstractmethod
 from typing import List, AsyncIterable, Any, Optional
 import asyncio
@@ -7,7 +6,7 @@ import asyncio
 from openai import Stream, AsyncOpenAI
 from openai.types.chat import ChatCompletionChunk
 
-from f1.common.schema import LLMConfig, AbstractLLMMessage
+from f1.common.schema import LLMConfig, LLMProviderEnum, AbstractLLMMessage
 
 
 class AbstractLLMProvider(ABC):
@@ -244,17 +243,166 @@ class VolcanoProvider(BaseProvider):
             raise ImportError("Volcano SDK is not installed. Please install it using 'pip install volcengine-python-sdk[ark]'")
 
 
+class LiteLLMProvider(AbstractLLMProvider):
+    """LiteLLM Provider — supports AWS Bedrock, Azure, and other backends via litellm"""
+
+    def _initialize_client(self):
+        """Verify litellm is importable (lazy import)"""
+        try:
+            import litellm  # noqa: F401
+        except ImportError:
+            raise ImportError(
+                "litellm is not installed. Please install it using 'pip install litellm'"
+            )
+
+    def chat_completion(self,
+                        messages: List[AbstractLLMMessage],
+                        **kwargs) -> str:
+        import litellm
+
+        converted_msgs = [x.model_dump() for x in messages]
+        latest_msg_str = f"{converted_msgs[-1]}"
+        self.logger.debug(
+            f"[Agent->LLM LiteLLM] [Length_As_String = {len(str(converted_msgs)):,}] {latest_msg_str[:1000]}"
+        )
+
+        call_kwargs = dict(model=self.llm_config.model, messages=converted_msgs, **kwargs)
+        if self.llm_config.api_key:
+            call_kwargs["api_key"] = self.llm_config.api_key
+        if self.llm_config.base_url:
+            call_kwargs["api_base"] = self.llm_config.base_url
+
+        response = litellm.completion(**call_kwargs)
+
+        # Defensive handling for empty/None responses 防御性处理空响应
+        if not response or not response.choices or len(response.choices) == 0:
+            self.logger.warning("[LLM LiteLLM] Empty response received from API")
+            return ""
+
+        choice = response.choices[0]
+        if not choice.message or choice.message.content is None:
+            self.logger.warning(
+                f"[LLM LiteLLM] No message content in response, finish_reason={choice.finish_reason}"
+            )
+            return ""
+
+        response_str = choice.message.content.strip()
+        self.last_trunk_meta_dict = choice.model_dump() if hasattr(choice, "model_dump") else {}
+        self.logger.debug(f"[LLM LiteLLM->Agent] {response_str}")
+        return response_str
+
+    async def async_chat_completion(self,
+                                    messages: List[AbstractLLMMessage],
+                                    **kwargs) -> str:
+        import litellm
+
+        converted_msgs = [x.model_dump() for x in messages]
+        latest_msg_str = f"{converted_msgs[-1]}"
+        self.logger.debug(
+            f"[Agent->LLM LiteLLM Async] [Length_As_String = {len(str(converted_msgs)):,}] {latest_msg_str[:1000]}"
+        )
+
+        call_kwargs = dict(model=self.llm_config.model, messages=converted_msgs, **kwargs)
+        if self.llm_config.api_key:
+            call_kwargs["api_key"] = self.llm_config.api_key
+        if self.llm_config.base_url:
+            call_kwargs["api_base"] = self.llm_config.base_url
+
+        response = await litellm.acompletion(**call_kwargs)
+
+        # Defensive handling for empty/None responses 防御性处理空响应
+        if not response or not response.choices or len(response.choices) == 0:
+            self.logger.warning("[LLM LiteLLM Async] Empty response received from API")
+            return ""
+
+        choice = response.choices[0]
+        if not choice.message or choice.message.content is None:
+            self.logger.warning(
+                f"[LLM LiteLLM Async] No message content in response, finish_reason={choice.finish_reason}"
+            )
+            return ""
+
+        response_str = choice.message.content.strip()
+        self.last_trunk_meta_dict = choice.model_dump() if hasattr(choice, "model_dump") else {}
+        self.logger.debug(f"[LLM LiteLLM Async->Agent] {response_str}")
+        return response_str
+
+    async def chat_completion_stream(self,
+                                     messages: List[AbstractLLMMessage],
+                                     **kwargs) -> AsyncIterable[str]:
+        import litellm
+
+        try:
+            converted_msgs = [x.model_dump() for x in messages]
+            for msg in converted_msgs:
+                msg_str = str(msg)
+                self.logger.debug(
+                    f"[Agent->LLM LiteLLM Stream] [Length_As_String = {len(msg_str):,}] {msg_str[:200]}"
+                )
+
+            call_kwargs = dict(
+                model=self.llm_config.model, messages=converted_msgs, stream=True, **kwargs
+            )
+            if self.llm_config.api_key:
+                call_kwargs["api_key"] = self.llm_config.api_key
+            if self.llm_config.base_url:
+                call_kwargs["api_base"] = self.llm_config.base_url
+
+            response = await litellm.acompletion(**call_kwargs)
+
+            async for chunk in response:
+                if chunk.choices:
+                    choice0 = chunk.choices[0]
+                    # capture final chunk meta when finish_reason shows up
+                    if getattr(choice0, "finish_reason", None) is not None:
+                        self.last_trunk_meta_dict = (
+                            choice0.model_dump() if hasattr(choice0, "model_dump") else {}
+                        )
+
+                    for monitored_key in self.streaming_monitored_trunk_keys:
+                        if hasattr(choice0, monitored_key) and getattr(choice0, monitored_key):
+                            if monitored_key not in self.streaming_trunk_meta_dict:
+                                self.streaming_trunk_meta_dict[monitored_key] = list()
+                            self.streaming_trunk_meta_dict[monitored_key].append(
+                                choice0.model_dump() if hasattr(choice0, "model_dump") else {}
+                            )
+
+                    # yield content if present
+                    if (
+                        getattr(choice0, "delta", None) is not None
+                        and choice0.delta.content is not None
+                        and choice0.delta.content
+                    ):
+                        content = choice0.delta.content
+                        self.logger.debug(f"[LLM LiteLLM Stream->Agent] chunk: {content}")
+                        yield content
+                        await asyncio.sleep(0)  # Allow other tasks to run
+
+        except Exception as e:
+            self.logger.error(f"Error in LiteLLM streaming completion: {str(e)}")
+            raise
+
+
 class LLMProviderFactory:
-    volcano_host_pattern = re.compile(r"ark\.[^\s]+?\.volces\.com")
 
     @classmethod
-    def create_instance(cls, llm_config: LLMConfig) -> AbstractLLMProvider:
+    def create_instance(cls, llm_config: LLMConfig,
+                        streaming_monitored_trunk_keys: Optional[list[str]] = None
+                        ) -> AbstractLLMProvider:
         """
-        Factory method to create an instance of the appropriate LLM provider based on the configuration
+        Factory method to create an instance of the appropriate LLM provider based on the provider field.
+        根据provider字段选择对应的LLM provider实例
 
         :param llm_config: LLMConfig instance with provider details
+        :param streaming_monitored_trunk_keys: List of keys to monitor in streaming mode
         :return: Instance of AbstractLLMProvider subclass
         """
-        if cls.volcano_host_pattern.search(llm_config.base_url):
-            return VolcanoProvider(llm_config)
-        return OpenAIProvider(llm_config)
+        kwargs = dict(streaming_monitored_trunk_keys=streaming_monitored_trunk_keys) if streaming_monitored_trunk_keys else {}
+
+        match llm_config.provider:
+            case LLMProviderEnum.OPENAI_COMPATIBLE:
+                return OpenAIProvider(llm_config, **kwargs)
+            case LLMProviderEnum.VOLCANO:
+                return VolcanoProvider(llm_config, **kwargs)
+            case LLMProviderEnum.LITELLM:
+                return LiteLLMProvider(llm_config, **kwargs)

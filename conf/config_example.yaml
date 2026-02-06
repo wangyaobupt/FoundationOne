@@ -23,3 +23,9 @@ image2meta-llm:
   base_url: https://ark.cn-beijing.volces.com/api/v3
   api_key: EXAMPLE_API_KEY
   model: EXAMPLE_MODEL_ID_FOR_MULTIMODE_LLM
+
+# AWS Bedrock via litellm (需要安装 pip install litellm)
+aws-example:
+  api_key: YOUR_AWS_BEDROCK_API_KEY
+  model: bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0
+  provider: litellm

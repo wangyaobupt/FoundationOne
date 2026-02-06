@@ -49,11 +49,84 @@ chatbot-llm:
   model: EXAMPLE_MODEL_ID
 ```
 
+Each config entry maps to an `LLMConfig` object with these fields:
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `api_key` | Yes | — | API key for the provider |
+| `model` | Yes | — | Model identifier (e.g. `gpt-4o`, `bedrock/anthropic.claude-haiku-4-5-20251001-v1:0`) |
+| `base_url` | No | `""` | API endpoint URL. Required for OpenAI-compatible and Volcano providers |
+| `provider` | No | `openai-compatible` | Provider selection. See [Providers](#providers) below |
+
 Environment overrides: any YAML leaf can be overridden via environment variables using the pattern `f1_cfg.<dotted.path>`. For example:
 
 ```bash
 export f1_cfg.chatbot-llm.api_key=REAL_KEY
 export f1_cfg.chatbot-llm.model=REAL_MODEL
+```
+
+## Providers
+
+The `provider` field in `LLMConfig` controls which backend is used. It accepts values from the `LLMProviderEnum`:
+
+| Provider value | Class | When to use |
+|---------------|-------|-------------|
+| `openai-compatible` | `OpenAIProvider` | **Default.** Any endpoint that follows the OpenAI API format — OpenAI, Volcano Engine, Baichuan, DeepSeek, local vLLM, etc. |
+| `volcano` | `VolcanoProvider` | Volcano Engine endpoints via the dedicated `volcenginesdkarkruntime` SDK |
+| `litellm` | `LiteLLMProvider` | AWS Bedrock, Azure, and 100+ other backends via [LiteLLM](https://github.com/BerriAI/litellm) |
+
+### Config examples
+
+**OpenAI-compatible** (default — no `provider` field needed):
+
+```yaml
+chatbot-llm:
+  base_url: https://ark.cn-beijing.volces.com/api/v3
+  api_key: YOUR_API_KEY
+  model: YOUR_MODEL_ID
+```
+
+**AWS Bedrock via LiteLLM:**
+
+```yaml
+aws-example:
+  api_key: 'YOUR_AWS_BEDROCK_API_KEY'
+  model: bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0
+  provider: litellm
+```
+
+> Note: Bedrock API keys containing `=` (Base64 padding) must be wrapped in single quotes in YAML.
+
+**Volcano Engine (dedicated SDK):**
+
+```yaml
+volcano-example:
+  base_url: https://ark.cn-beijing.volces.com/api/v3
+  api_key: YOUR_API_KEY
+  model: YOUR_MODEL_ID
+  provider: volcano
+```
+
+### Using a provider in code
+
+```python
+from f1 import config as f1_config
+from f1.common.schema import LLMConfig
+from f1.common.llm_provider import LLMProviderFactory
+
+# The factory reads the 'provider' field and returns the correct provider instance
+llm_cfg = LLMConfig(**f1_config["aws-example"])
+provider = LLMProviderFactory.create_instance(llm_cfg)
+
+# Sync call
+response = provider.chat_completion(messages=[...])
+
+# Async call
+response = await provider.async_chat_completion(messages=[...])
+
+# Streaming call
+async for chunk in provider.chat_completion_stream(messages=[...]):
+    print(chunk, end="")
 ```
 
 ## Quickstart
@@ -118,6 +191,6 @@ To run the tests, execute the following command:
 
 ## Notes
 
-- Both OpenAI SDK and Volcano Engine SDK are mandatory and installed via requirements.txt.
+- OpenAI SDK, Volcano Engine SDK, and LiteLLM are all installed via `requirements.txt`.
 - If `F1_CONFIG` is set but points to a non-existent file, import will raise with a clear message.
 - Keep API keys out of VCS; set them via environment variables or secret managers.
