@@ -29,3 +29,5 @@ aws-example:
   api_key: YOUR_AWS_BEDROCK_API_KEY
   model: bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0
   provider: litellm
+  extra_params:
+    aws_region_name: ap-southeast-1

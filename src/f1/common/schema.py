@@ -15,6 +15,7 @@ class LLMConfig(BaseModel):
     api_key: str
     model: str = Field(description="name of specific model, such as gpt-4o")
     provider: LLMProviderEnum = LLMProviderEnum.OPENAI_COMPATIBLE
+    extra_params: dict = Field(default_factory=dict, description="Provider-specific parameters, e.g. aws_region_name for Bedrock")
 
 class LLMRole(StrEnum):
     USER = "user"

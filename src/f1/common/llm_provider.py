@@ -266,7 +266,9 @@ class LiteLLMProvider(AbstractLLMProvider):
             f"[Agent->LLM LiteLLM] [Length_As_String = {len(str(converted_msgs)):,}] {latest_msg_str[:1000]}"
         )
 
-        call_kwargs = dict(model=self.llm_config.model, messages=converted_msgs, **kwargs)
+        call_kwargs = {"model": self.llm_config.model, "messages": converted_msgs}
+        call_kwargs.update(self.llm_config.extra_params)
+        call_kwargs.update(kwargs)
         if self.llm_config.api_key:
             call_kwargs["api_key"] = self.llm_config.api_key
 
@@ -300,7 +302,9 @@ class LiteLLMProvider(AbstractLLMProvider):
             f"[Agent->LLM LiteLLM Async] [Length_As_String = {len(str(converted_msgs)):,}] {latest_msg_str[:1000]}"
         )
 
-        call_kwargs = dict(model=self.llm_config.model, messages=converted_msgs, **kwargs)
+        call_kwargs = {"model": self.llm_config.model, "messages": converted_msgs}
+        call_kwargs.update(self.llm_config.extra_params)
+        call_kwargs.update(kwargs)
         if self.llm_config.api_key:
             call_kwargs["api_key"] = self.llm_config.api_key
 
@@ -336,13 +340,11 @@ class LiteLLMProvider(AbstractLLMProvider):
                     f"[Agent->LLM LiteLLM Stream] [Length_As_String = {len(msg_str):,}] {msg_str[:200]}"
                 )
 
-            call_kwargs = dict(
-                model=self.llm_config.model, messages=converted_msgs, stream=True, **kwargs
-            )
+            call_kwargs = {"model": self.llm_config.model, "messages": converted_msgs, "stream": True}
+            call_kwargs.update(self.llm_config.extra_params)
+            call_kwargs.update(kwargs)
             if self.llm_config.api_key:
                 call_kwargs["api_key"] = self.llm_config.api_key
-            if self.llm_config.base_url:
-                call_kwargs["api_base"] = self.llm_config.base_url
 
             response = await litellm.acompletion(**call_kwargs)
 

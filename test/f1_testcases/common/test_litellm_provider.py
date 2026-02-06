@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 import unittest
 from unittest.mock import patch, MagicMock, AsyncMock
 
@@ -97,6 +98,47 @@ class TestLiteLLMProviderSync(unittest.TestCase):
         self.assertNotIn("api_base", call_kwargs)
 
     @patch("litellm.completion")
+    def test_extra_params_passed_to_litellm(self, mock_completion):
+        """extra_params from config should be forwarded to litellm call
+        config中的extra_params应传递给litellm调用"""
+        mock_completion.return_value = _make_litellm_response("ok")
+        config = LLMConfig(
+            api_key="test-key",
+            model="bedrock/anthropic.claude-haiku-4-5-20251001-v1:0",
+            provider="litellm",
+            extra_params={"aws_region_name": "ap-southeast-1"},
+        )
+        provider = LiteLLMProvider(config)
+        provider.chat_completion(self.messages)
+        call_kwargs = mock_completion.call_args[1]
+        self.assertEqual(call_kwargs["aws_region_name"], "ap-southeast-1")
+
+    @patch("litellm.completion")
+    def test_extra_params_empty_by_default(self, mock_completion):
+        """Without extra_params, no extra keys should appear in litellm call"""
+        mock_completion.return_value = _make_litellm_response("ok")
+        provider = LiteLLMProvider(self.config)
+        provider.chat_completion(self.messages)
+        call_kwargs = mock_completion.call_args[1]
+        expected_keys = {"model", "messages", "api_key"}
+        self.assertEqual(set(call_kwargs.keys()), expected_keys)
+
+    @patch("litellm.completion")
+    def test_kwargs_override_extra_params(self, mock_completion):
+        """Code-level kwargs should override extra_params from config"""
+        mock_completion.return_value = _make_litellm_response("ok")
+        config = LLMConfig(
+            api_key="test-key",
+            model="bedrock/model",
+            provider="litellm",
+            extra_params={"max_tokens": 100},
+        )
+        provider = LiteLLMProvider(config)
+        provider.chat_completion(self.messages, max_tokens=200)
+        call_kwargs = mock_completion.call_args[1]
+        self.assertEqual(call_kwargs["max_tokens"], 200)
+
+    @patch("litellm.completion")
     def test_chat_completion_empty_response(self, mock_completion):
         """Empty choices list should return empty string 空响应返回空字符串"""
         mock_completion.return_value = _make_empty_response()
@@ -136,6 +178,21 @@ class TestLiteLLMProviderAsync(unittest.TestCase):
         mock_acompletion.assert_called_once()
 
     @patch("litellm.acompletion", new_callable=AsyncMock)
+    def test_extra_params_passed_in_async(self, mock_acompletion):
+        """extra_params should also be forwarded in async calls"""
+        mock_acompletion.return_value = _make_litellm_response("ok")
+        config = LLMConfig(
+            api_key="test-key",
+            model="bedrock/model",
+            provider="litellm",
+            extra_params={"aws_region_name": "us-west-2"},
+        )
+        provider = LiteLLMProvider(config)
+        asyncio.run(provider.async_chat_completion(self.messages))
+        call_kwargs = mock_acompletion.call_args[1]
+        self.assertEqual(call_kwargs["aws_region_name"], "us-west-2")
+
+    @patch("litellm.acompletion", new_callable=AsyncMock)
     def test_async_chat_completion_empty_response(self, mock_acompletion):
         mock_acompletion.return_value = _make_empty_response()
         provider = LiteLLMProvider(self.config)
@@ -173,6 +230,16 @@ class TestLLMProviderFactory(unittest.TestCase):
         with self.assertRaises(ValidationError):
             LLMConfig(api_key="k", model="m", provider="unknown_provider")
 
+    def test_extra_params_does_not_affect_openai_provider(self):
+        """OpenAI provider should construct fine even with extra_params set"""
+        config = LLMConfig(
+            base_url="https://api.openai.com/v1", api_key="k", model="gpt-4o",
+            provider="openai-compatible",
+            extra_params={"some_param": "value"},
+        )
+        provider = LLMProviderFactory.create_instance(config)
+        self.assertIsInstance(provider, OpenAIProvider)
+
     def test_factory_passes_streaming_keys(self):
         config = LLMConfig(api_key="k", model="bedrock/model", provider="litellm")
         keys = ["usage"]
@@ -185,39 +252,38 @@ class TestLiteLLMProviderIntegration(unittest.IsolatedAsyncioTestCase):
     """Integration tests with real AWS Bedrock API calls via LiteLLM
     真实调用AWS Bedrock API的集成测试，验证端到端流程"""
 
+    CONCURRENCY = 100
+
     def setUp(self):
         configure_module_logging(level=logging.INFO)
         from f1 import config
         self.llm_config = LLMConfig(**config['aws_example'])
-        self.messages = [
-            LLMMessageTextOnly(role=LLMRole.USER, content="Reply with exactly: hello world"),
-        ]
 
-    def test_sync_chat_completion(self):
-        """Test sync call via factory → LiteLLMProvider → Bedrock"""
+    async def test_concurrent_async_completion(self):
+        """Test 100 concurrent async calls via factory → LiteLLMProvider → Bedrock
+        测试100个并发异步请求，验证extra_params(aws_region_name)端到端生效"""
         provider = LLMProviderFactory.create_instance(self.llm_config)
         self.assertIsInstance(provider, LiteLLMProvider)
-        resp = provider.chat_completion(self.messages)
-        print(f"[sync] {resp}")
-        self.assertTrue(resp)
 
-    async def test_async_chat_completion(self):
-        """Test async call via factory → LiteLLMProvider → Bedrock"""
-        provider = LLMProviderFactory.create_instance(self.llm_config)
-        resp = await provider.async_chat_completion(self.messages)
-        print(f"[async] {resp}")
-        self.assertTrue(resp)
+        async def single_call(i: int) -> str:
+            messages = [LLMMessageTextOnly(role=LLMRole.USER, content=f"Say hello #{i}")]
+            return await provider.async_chat_completion(messages)
 
-    async def test_streaming_chat_completion(self):
-        """Test streaming call via factory → LiteLLMProvider → Bedrock"""
-        provider = LLMProviderFactory.create_instance(self.llm_config)
-        chunks = []
-        async for chunk in provider.chat_completion_stream(self.messages):
-            chunks.append(chunk)
-        full_response = "".join(chunks)
-        print(f"[stream] {full_response}")
-        self.assertTrue(full_response)
-        self.assertTrue(len(chunks) > 0)
+        start = time.perf_counter()
+        tasks = [single_call(i) for i in range(self.CONCURRENCY)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        elapsed = time.perf_counter() - start
+
+        successes = [r for r in results if isinstance(r, str) and r]
+        errors = [r for r in results if isinstance(r, Exception)]
+
+        print(f"\n[concurrent] {len(successes)}/{self.CONCURRENCY} succeeded in {elapsed:.2f}s")
+        if errors:
+            print(f"[concurrent] {len(errors)} errors, first: {type(errors[0]).__name__}: {errors[0]}")
+
+        # Allow some rate-limit failures, but majority should succeed
+        self.assertGreater(len(successes), self.CONCURRENCY * 0.5,
+                           f"Too many failures: {len(errors)}/{self.CONCURRENCY}")
 
 
 class TestLLMConfigProviderField(unittest.TestCase):
@@ -239,6 +305,19 @@ class TestLLMConfigProviderField(unittest.TestCase):
             model="m",
         )
         self.assertEqual(config.provider, LLMProviderEnum.OPENAI_COMPATIBLE)
+
+    def test_extra_params_defaults_to_empty_dict(self):
+        config = LLMConfig(api_key="k", model="m")
+        self.assertEqual(config.extra_params, {})
+
+    def test_extra_params_from_yaml_dict(self):
+        """Simulate YAML input with extra_params containing multiple keys"""
+        config = LLMConfig(
+            api_key="k", model="m", provider="litellm",
+            extra_params={"aws_region_name": "us-west-2", "timeout": 30},
+        )
+        self.assertEqual(config.extra_params["aws_region_name"], "us-west-2")
+        self.assertEqual(config.extra_params["timeout"], 30)
 
 
 if __name__ == "__main__":

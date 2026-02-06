@@ -57,6 +57,7 @@ Each config entry maps to an `LLMConfig` object with these fields:
 | `model` | Yes | — | Model identifier (e.g. `gpt-4o`, `bedrock/anthropic.claude-haiku-4-5-20251001-v1:0`) |
 | `base_url` | No | `""` | API endpoint URL. Required for OpenAI-compatible and Volcano providers |
 | `provider` | No | `openai-compatible` | Provider selection. See [Providers](#providers) below |
+| `extra_params` | No | `{}` | Provider-specific parameters passed through to the backend (e.g. `aws_region_name` for Bedrock) |
 
 Environment overrides: any YAML leaf can be overridden via environment variables using the pattern `f1_cfg.<dotted.path>`. For example:
 
@@ -93,6 +94,8 @@ aws-example:
   api_key: 'YOUR_AWS_BEDROCK_API_KEY'
   model: bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0
   provider: litellm
+  extra_params:
+    aws_region_name: ap-southeast-1
 ```
 
 > Note: Bedrock API keys containing `=` (Base64 padding) must be wrapped in single quotes in YAML.
