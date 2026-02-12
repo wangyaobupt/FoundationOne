@@ -31,3 +31,9 @@ aws-example:
   provider: litellm
   extra_params:
     aws_region_name: ap-southeast-1
+
+# AWS Bedrock via litellm with env var auth (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION_NAME)
+# AWS Bedrock 通过环境变量认证，无需在配置中填写api_key
+aws-env-auth-example:
+  model: bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0
+  provider: litellm

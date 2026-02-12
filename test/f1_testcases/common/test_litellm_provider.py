@@ -320,5 +320,83 @@ class TestLLMConfigProviderField(unittest.TestCase):
         self.assertEqual(config.extra_params["timeout"], 30)
 
 
+class TestLiteLLMEnvVarAuth(unittest.TestCase):
+    """Tests for LiteLLM provider AWS env var authentication
+    LiteLLM provider AWS环境变量认证测试"""
+
+    def test_litellm_provider_no_api_key(self):
+        """LiteLLM provider should accept empty api_key
+        LiteLLM provider应接受空api_key"""
+        config = LLMConfig(model="bedrock/model", provider="litellm")
+        self.assertEqual(config.api_key, "")
+        self.assertEqual(config.provider, LLMProviderEnum.LITELLM)
+
+    def test_litellm_provider_with_api_key(self):
+        """LiteLLM provider should still work with explicit api_key
+        LiteLLM provider仍应支持显式api_key"""
+        config = LLMConfig(api_key="my-key", model="bedrock/model", provider="litellm")
+        self.assertEqual(config.api_key, "my-key")
+
+    def test_openai_provider_requires_api_key(self):
+        """OpenAI-compatible provider must have api_key — ValidationError when missing
+        OpenAI-compatible provider必须有api_key"""
+        from pydantic import ValidationError
+        with self.assertRaises(ValidationError) as ctx:
+            LLMConfig(model="gpt-4o")
+        self.assertIn("api_key is required", str(ctx.exception))
+
+    def test_volcano_provider_requires_api_key(self):
+        """Volcano provider must have api_key — ValidationError when missing
+        Volcano provider必须有api_key"""
+        from pydantic import ValidationError
+        with self.assertRaises(ValidationError) as ctx:
+            LLMConfig(model="m", provider="volcano")
+        self.assertIn("api_key is required", str(ctx.exception))
+
+    @patch("litellm.completion")
+    def test_no_api_key_not_passed_to_litellm(self, mock_completion):
+        """When api_key is empty, it should NOT be passed to litellm.completion()
+        api_key为空时不应传递给litellm.completion()"""
+        mock_completion.return_value = _make_litellm_response("ok")
+        config = LLMConfig(model="bedrock/model", provider="litellm")
+        # Set AWS env vars so _initialize_client doesn't raise
+        with patch.dict("os.environ", {
+            "AWS_ACCESS_KEY_ID": "fake-key",
+            "AWS_SECRET_ACCESS_KEY": "fake-secret",
+            "AWS_REGION_NAME": "us-east-1",
+        }):
+            provider = LiteLLMProvider(config)
+        messages = [LLMMessageTextOnly(role=LLMRole.USER, content="Hi")]
+        provider.chat_completion(messages)
+        call_kwargs = mock_completion.call_args[1]
+        self.assertNotIn("api_key", call_kwargs)
+
+    def test_missing_aws_env_vars_raises_error(self):
+        """No api_key + no extra_params creds + no env vars → ValueError
+        无api_key、无extra_params凭证、无环境变量时应抛出ValueError"""
+        config = LLMConfig(model="bedrock/model", provider="litellm")
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaises(ValueError) as ctx:
+                LiteLLMProvider(config)
+        self.assertIn("Missing env vars", str(ctx.exception))
+        self.assertIn("AWS_ACCESS_KEY_ID", str(ctx.exception))
+
+    def test_aws_creds_in_extra_params_no_env_check(self):
+        """AWS creds in extra_params should bypass env var check
+        extra_params中提供AWS凭证时不检查环境变量"""
+        config = LLMConfig(
+            model="bedrock/model",
+            provider="litellm",
+            extra_params={
+                "aws_access_key_id": "key-from-params",
+                "aws_secret_access_key": "secret-from-params",
+            },
+        )
+        # Should not raise even with no env vars
+        with patch.dict("os.environ", {}, clear=True):
+            provider = LiteLLMProvider(config)
+        self.assertIsInstance(provider, LiteLLMProvider)
+
+
 if __name__ == "__main__":
     unittest.main()

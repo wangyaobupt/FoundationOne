@@ -247,13 +247,32 @@ class LiteLLMProvider(AbstractLLMProvider):
     """LiteLLM Provider — supports AWS Bedrock, Azure, and other backends via litellm"""
 
     def _initialize_client(self):
-        """Verify litellm is importable (lazy import)"""
+        """Verify litellm is importable (lazy import) and validate credentials
+        校验litellm可导入，并在无api_key时验证AWS凭证可用"""
         try:
             import litellm  # noqa: F401
         except ImportError:
             raise ImportError(
                 "litellm is not installed. Please install it using 'pip install litellm'"
             )
+
+        # When no api_key, validate AWS credentials are available
+        # api_key为空时，校验AWS凭证是否可用（环境变量或extra_params）
+        if not self.llm_config.api_key:
+            aws_key_in_params = self.llm_config.extra_params.get("aws_access_key_id")
+            aws_secret_in_params = self.llm_config.extra_params.get("aws_secret_access_key")
+            if not aws_key_in_params or not aws_secret_in_params:
+                import os
+                missing = []
+                for var in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION_NAME"):
+                    if not os.environ.get(var):
+                        missing.append(var)
+                if missing:
+                    raise ValueError(
+                        f"LiteLLM provider requires credentials. Either provide api_key in config, "
+                        f"pass aws_access_key_id/aws_secret_access_key in extra_params, "
+                        f"or set environment variables. Missing env vars: {', '.join(missing)}"
+                    )
 
     def chat_completion(self,
                         messages: List[AbstractLLMMessage],

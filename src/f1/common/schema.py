@@ -12,10 +12,21 @@ class LLMProviderEnum(StrEnum):
 
 class LLMConfig(BaseModel):
     base_url: str = ""  # default empty; not needed for litellm
-    api_key: str
+    api_key: str = ""  # default empty; not required for litellm (e.g. AWS env var auth)
     model: str = Field(description="name of specific model, such as gpt-4o")
     provider: LLMProviderEnum = LLMProviderEnum.OPENAI_COMPATIBLE
     extra_params: dict = Field(default_factory=dict, description="Provider-specific parameters, e.g. aws_region_name for Bedrock")
+
+    @model_validator(mode='after')
+    def validate_api_key_for_provider(self):
+        """Enforce api_key for providers that require it; LITELLM allows empty (AWS env var auth)
+        对需要api_key的provider强制校验；LITELLM允许为空（支持AWS环境变量认证）"""
+        if not self.api_key and self.provider not in (LLMProviderEnum.LITELLM,):
+            raise ValueError(
+                f"api_key is required for provider '{self.provider}'. "
+                f"Only the 'litellm' provider supports authentication without api_key (e.g. AWS env vars)."
+            )
+        return self
 
 class LLMRole(StrEnum):
     USER = "user"
