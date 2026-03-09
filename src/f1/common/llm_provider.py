@@ -129,6 +129,7 @@ class BaseProvider(AbstractLLMProvider):
         """
         converted_msgs = [x.model_dump() for x in messages]
         latest_msg_str = f"{converted_msgs[-1]}"
+        self.logger.info(f"[LLM Call] model={self.llm_config.model}")
         self.logger.debug(f"[Agent->LLM Async] [Length_As_String = {len(str(converted_msgs)):,}] {latest_msg_str[:1000]}")
 
         response = await self.async_client.chat.completions.create(
@@ -317,6 +318,7 @@ class LiteLLMProvider(AbstractLLMProvider):
 
         converted_msgs = [x.model_dump() for x in messages]
         latest_msg_str = f"{converted_msgs[-1]}"
+        self.logger.info(f"[LLM Call] model={self.llm_config.model}")
         self.logger.debug(
             f"[Agent->LLM LiteLLM Async] [Length_As_String = {len(str(converted_msgs)):,}] {latest_msg_str[:1000]}"
         )
