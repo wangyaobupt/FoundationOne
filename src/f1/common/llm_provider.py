@@ -34,6 +34,13 @@ class AbstractLLMProvider(ABC):
         self.last_trunk_meta_dict = dict()
         self.streaming_monitored_trunk_keys = streaming_monitored_trunk_keys if streaming_monitored_trunk_keys is not None else []
         self.streaming_trunk_meta_dict = dict()
+        self.last_usage = None       # {prompt_tokens, completion_tokens, total_tokens} from last call
+        self.accumulated_usage = {   # running totals across all calls on this provider instance
+            "llm_calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
         self._initialize_client()
 
     @abstractmethod
@@ -44,31 +51,32 @@ class AbstractLLMProvider(ABC):
         """
         pass
 
-    @abstractmethod
-    def chat_completion(self,
-                        messages: List[AbstractLLMMessage],
-                        **kwargs) -> str:
-        """
-        Generate chat completion using the LLM provider
+    # --- concrete template methods (NOT abstract) ---
 
-        :param messages: List of message dictionaries
-        :param kwargs: following service provider's API guide, e.g.
-            max_tokens: Maximum number of tokens to generate
-            temperature: Sampling temperature for text generation
-        :return: Generated chat response
-        """
+    def chat_completion(self, messages: List[AbstractLLMMessage], **kwargs) -> str:
+        self.logger.info(f"[LLM Call] model={self.llm_config.model}")
+        response = self._call_llm(messages, **kwargs)
+        self._record_usage(response)
+        return self._extract_content(response)
+
+    async def async_chat_completion(self, messages: List[AbstractLLMMessage], **kwargs) -> str:
+        self.logger.info(f"[LLM Call] model={self.llm_config.model}")
+        response = await self._async_call_llm(messages, **kwargs)
+        self._record_usage(response)
+        return self._extract_content(response)
+
+    # --- abstract hooks for subclasses ---
+
+    @abstractmethod
+    def _call_llm(self, messages: List[AbstractLLMMessage], **kwargs) -> Any:
+        """Make the sync API call. Return the raw response object (provider-specific type)."""
         pass
 
     @abstractmethod
-    async def async_chat_completion(self,
-                        messages: List[AbstractLLMMessage],
-                        **kwargs) -> str:
-        """
-        Async version of chat_completion to generate chat completion using the LLM provider
-        """
+    async def _async_call_llm(self, messages: List[AbstractLLMMessage], **kwargs) -> Any:
+        """Make the async API call. Return the raw response object (provider-specific type)."""
         pass
 
-    # Add to AbstractLLMProvider
     @abstractmethod
     async def chat_completion_stream(self,
                                      messages: List[AbstractLLMMessage],
@@ -84,74 +92,63 @@ class AbstractLLMProvider(ABC):
         """
         pass
 
+    # --- shared post-processing ---
+
+    def _record_usage(self, response) -> None:
+        """Extract and accumulate token usage from LLM response.
+        从LLM响应中提取并累加token使用量"""
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            self.last_usage = usage.model_dump() if hasattr(usage, "model_dump") else None
+        else:
+            self.last_usage = None
+
+        self.accumulated_usage["llm_calls"] += 1
+        if self.last_usage:
+            self.accumulated_usage["prompt_tokens"] += self.last_usage.get("prompt_tokens", 0)
+            self.accumulated_usage["completion_tokens"] += self.last_usage.get("completion_tokens", 0)
+            self.accumulated_usage["total_tokens"] += self.last_usage.get("total_tokens", 0)
+
+    def _extract_content(self, response) -> str:
+        """Extract text content from LLM response. Handles empty/None responses.
+        从LLM响应中提取文本内容，处理空/None响应"""
+        if not response or not response.choices or len(response.choices) == 0:
+            self.logger.warning("[LLM] Empty response received from API")
+            return ""
+
+        choice = response.choices[0]
+        if not choice.message or choice.message.content is None:
+            self.logger.warning(
+                f"[LLM] No message content in response, finish_reason={choice.finish_reason}"
+            )
+            return ""
+
+        # hasattr guard: OpenAI SDK choices always have model_dump() (pydantic),
+        # but LiteLLM wraps some providers with plain dicts. Guard keeps both paths safe.
+        self.last_trunk_meta_dict = choice.model_dump() if hasattr(choice, "model_dump") else {}
+        return choice.message.content.strip()
+
 
 class BaseProvider(AbstractLLMProvider):
     """Base class for OpenAI-like providers"""
 
-    def chat_completion(self,
-                        messages: List[AbstractLLMMessage],
-                        **kwargs) -> str:
+    def _call_llm(self, messages: List[AbstractLLMMessage], **kwargs) -> Any:
         converted_msgs = [x.model_dump() for x in messages]
-        latest_msg_str = f"{converted_msgs[-1]}"
-        self.logger.debug(f"[Agent->LLM] [Length_As_String = {len(str(converted_msgs)):,}] {latest_msg_str[:1000]}")
-        response = self.sync_client.chat.completions.create(
+        self.logger.debug(f"[Agent->LLM] [Length={len(str(converted_msgs)):,}] {str(converted_msgs[-1])[:1000]}")
+        return self.sync_client.chat.completions.create(
             model=self.llm_config.model,
             messages=converted_msgs,
             **kwargs
         )
 
-        # Defensive handling for empty/None responses
-        if not response or not response.choices or len(response.choices) == 0:
-            self.logger.warning(f"[LLM] Empty response received from API")
-            return ""
-
-        choice = response.choices[0]
-        if not choice.message or choice.message.content is None:
-            self.logger.warning(f"[LLM] No message content in response, finish_reason={choice.finish_reason}")
-            return ""
-
-        response_str = choice.message.content.strip()
-        self.logger.debug(f"[LLM->Agent] {response_str}")
-        return response_str
-
-    async def async_chat_completion(self,
-                              messages: List[AbstractLLMMessage],
-                              **kwargs
-                              ) -> str:
-        """
-        Asynchronous implementation of chat completion
-
-        :param messages: List of message dictionaries
-        :param kwargs: following service provider's API guide, e.g.
-            max_tokens: Maximum number of tokens to generate
-            temperature: Sampling temperature for text generation
-        :return: Generated chat response
-        """
+    async def _async_call_llm(self, messages: List[AbstractLLMMessage], **kwargs) -> Any:
         converted_msgs = [x.model_dump() for x in messages]
-        latest_msg_str = f"{converted_msgs[-1]}"
-        self.logger.info(f"[LLM Call] model={self.llm_config.model}")
-        self.logger.debug(f"[Agent->LLM Async] [Length_As_String = {len(str(converted_msgs)):,}] {latest_msg_str[:1000]}")
-
-        response = await self.async_client.chat.completions.create(
+        self.logger.debug(f"[Agent->LLM Async] [Length={len(str(converted_msgs)):,}] {str(converted_msgs[-1])[:1000]}")
+        return await self.async_client.chat.completions.create(
             model=self.llm_config.model,
             messages=converted_msgs,
             **kwargs
         )
-
-        # Defensive handling for empty/None responses
-        if not response or not response.choices or len(response.choices) == 0:
-            self.logger.warning(f"[LLM Async] Empty response received from API")
-            return ""
-
-        choice = response.choices[0]
-        if not choice.message or choice.message.content is None:
-            self.logger.warning(f"[LLM Async] No message content in response, finish_reason={choice.finish_reason}")
-            return ""
-
-        response_str = choice.message.content.strip()
-        self.last_trunk_meta_dict = choice.model_dump()
-        self.logger.debug(f"[LLM Async->Agent] {response_str}")
-        return response_str
 
     # Implementation for OpenAIBaseProvider
     async def chat_completion_stream(self, messages: List[AbstractLLMMessage], **kwargs) -> AsyncIterable[str]:
@@ -275,78 +272,27 @@ class LiteLLMProvider(AbstractLLMProvider):
                         f"or set environment variables. Missing env vars: {', '.join(missing)}"
                     )
 
-    def chat_completion(self,
-                        messages: List[AbstractLLMMessage],
-                        **kwargs) -> str:
+    def _call_llm(self, messages: List[AbstractLLMMessage], **kwargs) -> Any:
         import litellm
-
         converted_msgs = [x.model_dump() for x in messages]
-        latest_msg_str = f"{converted_msgs[-1]}"
-        self.logger.debug(
-            f"[Agent->LLM LiteLLM] [Length_As_String = {len(str(converted_msgs)):,}] {latest_msg_str[:1000]}"
-        )
-
+        self.logger.debug(f"[Agent->LLM LiteLLM] [Length={len(str(converted_msgs)):,}] {str(converted_msgs[-1])[:1000]}")
         call_kwargs = {"model": self.llm_config.model, "messages": converted_msgs}
         call_kwargs.update(self.llm_config.extra_params)
         call_kwargs.update(kwargs)
         if self.llm_config.api_key:
             call_kwargs["api_key"] = self.llm_config.api_key
+        return litellm.completion(**call_kwargs)
 
-        response = litellm.completion(**call_kwargs)
-
-        # Defensive handling for empty/None responses 防御性处理空响应
-        if not response or not response.choices or len(response.choices) == 0:
-            self.logger.warning("[LLM LiteLLM] Empty response received from API")
-            return ""
-
-        choice = response.choices[0]
-        if not choice.message or choice.message.content is None:
-            self.logger.warning(
-                f"[LLM LiteLLM] No message content in response, finish_reason={choice.finish_reason}"
-            )
-            return ""
-
-        response_str = choice.message.content.strip()
-        self.last_trunk_meta_dict = choice.model_dump() if hasattr(choice, "model_dump") else {}
-        self.logger.debug(f"[LLM LiteLLM->Agent] {response_str}")
-        return response_str
-
-    async def async_chat_completion(self,
-                                    messages: List[AbstractLLMMessage],
-                                    **kwargs) -> str:
+    async def _async_call_llm(self, messages: List[AbstractLLMMessage], **kwargs) -> Any:
         import litellm
-
         converted_msgs = [x.model_dump() for x in messages]
-        latest_msg_str = f"{converted_msgs[-1]}"
-        self.logger.info(f"[LLM Call] model={self.llm_config.model}")
-        self.logger.debug(
-            f"[Agent->LLM LiteLLM Async] [Length_As_String = {len(str(converted_msgs)):,}] {latest_msg_str[:1000]}"
-        )
-
+        self.logger.debug(f"[Agent->LLM LiteLLM Async] [Length={len(str(converted_msgs)):,}] {str(converted_msgs[-1])[:1000]}")
         call_kwargs = {"model": self.llm_config.model, "messages": converted_msgs}
         call_kwargs.update(self.llm_config.extra_params)
         call_kwargs.update(kwargs)
         if self.llm_config.api_key:
             call_kwargs["api_key"] = self.llm_config.api_key
-
-        response = await litellm.acompletion(**call_kwargs)
-
-        # Defensive handling for empty/None responses 防御性处理空响应
-        if not response or not response.choices or len(response.choices) == 0:
-            self.logger.warning("[LLM LiteLLM Async] Empty response received from API")
-            return ""
-
-        choice = response.choices[0]
-        if not choice.message or choice.message.content is None:
-            self.logger.warning(
-                f"[LLM LiteLLM Async] No message content in response, finish_reason={choice.finish_reason}"
-            )
-            return ""
-
-        response_str = choice.message.content.strip()
-        self.last_trunk_meta_dict = choice.model_dump() if hasattr(choice, "model_dump") else {}
-        self.logger.debug(f"[LLM LiteLLM Async->Agent] {response_str}")
-        return response_str
+        return await litellm.acompletion(**call_kwargs)
 
     async def chat_completion_stream(self,
                                      messages: List[AbstractLLMMessage],
